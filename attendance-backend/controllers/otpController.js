@@ -87,9 +87,11 @@ exports.sendOtp = async (req, res) => {
     });
   } catch (error) {
     console.error('Error sending OTP:', error);
+    console.error('Error stack:', error.stack);
     return res.status(500).json({
       success: false,
       message: 'Internal server error',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined,
       data: null
     });
   }
