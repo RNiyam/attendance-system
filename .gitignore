@@ -1,0 +1,64 @@
+# Root level .gitignore for monorepo
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# IDE
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# Environment files (do not commit secrets)
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Database files (if any local DB files exist)
+*.db
+*.sqlite
+*.sqlite3
+
+# Package manager locks (keep these, but ignore if you want)
+# Uncomment if you want to ignore:
+# package-lock.json
+# yarn.lock
+# pnpm-lock.yaml
+
+# Build artifacts
+dist/
+build/
+.next/
+out/
+
+# Node modules (will be in service-specific .gitignore, but good to have here too)
+node_modules/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+.venv
