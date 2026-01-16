@@ -111,14 +111,19 @@ class AuthController {
       const userFields = ['name'];
       const userValues = [name];
       
+      // Add email only if provided (mobile-only signup doesn't need email)
       if (email) {
         userFields.push('email');
         userValues.push(email);
       }
+      
+      // Add mobile number fields if provided
       if (mobileNumber) {
         userFields.push('mobile_number', 'is_mobile_verified');
         userValues.push(mobileNumber, true);
       }
+      
+      // Add password only if provided (mobile-only signup doesn't need password)
       if (hashedPassword) {
         userFields.push('password');
         userValues.push(hashedPassword);

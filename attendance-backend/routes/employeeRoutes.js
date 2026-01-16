@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const employeeController = require('../controllers/employeeController');
 
-// Register new employee
+// Register new employee (works with or without auth)
 router.post('/register', employeeController.registerEmployee.bind(employeeController));
 
 // Get all employees (both /api/employee and /api/employees)

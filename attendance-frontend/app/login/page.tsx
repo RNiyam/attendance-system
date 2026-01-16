@@ -170,8 +170,13 @@ export default function LoginPage() {
             // Redirect to onboarding if not completed
             router.push('/onboarding')
           } else {
-            // Redirect to main app if onboarding completed
-            router.push('/')
+            // Redirect to dashboard if onboarding completed
+            const user = JSON.parse(localStorage.getItem('user') || '{}')
+            if (user.role === 'admin') {
+              router.push('/admin-dashboard')
+            } else {
+              router.push('/dashboard')
+            }
           }
         } catch (onboardingError) {
           // If onboarding check fails, assume not completed and redirect to onboarding
@@ -196,6 +201,19 @@ export default function LoginPage() {
   }
 
   const isPasswordValid = Object.values(passwordValidations).every(v => v === true)
+
+  // Auto-show terms modal when password is confirmed and matches
+  useEffect(() => {
+    if (signUpMethod === 'email' && 
+        signUpPassword && 
+        confirmPassword && 
+        signUpPassword === confirmPassword && 
+        isPasswordValid &&
+        !termsAccepted &&
+        !showTermsModal) {
+      setShowTermsModal(true)
+    }
+  }, [signUpPassword, confirmPassword, isPasswordValid, signUpMethod, termsAccepted, showTermsModal])
 
   const handleSendSignUpOTP = async () => {
     if (!signUpMobileNumber) {
@@ -1196,9 +1214,10 @@ export default function LoginPage() {
                   type="submit"
                   disabled={
                     signUpLoading || 
+                    !name ||
                     !termsAccepted || 
-                    (signUpMethod === 'email' && (!isPasswordValid || signUpPassword !== confirmPassword)) ||
-                    (signUpMethod === 'mobile' && !signUpOtpVerified)
+                    (signUpMethod === 'email' && (!signUpEmail || !signUpPassword || !confirmPassword || !isPasswordValid || signUpPassword !== confirmPassword)) ||
+                    (signUpMethod === 'mobile' && (!signUpMobileNumber || !signUpOtpVerified))
                   }
                   className="w-full text-white py-3 px-6 rounded-lg font-semibold transition flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                   style={{ backgroundColor: '#221461', boxShadow: '0 10px 15px -3px rgba(34, 20, 97, 0.3)' }}

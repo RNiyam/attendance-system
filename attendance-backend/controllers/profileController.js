@@ -10,12 +10,16 @@ class ProfileController {
         fullName,
         email,
         phone,
+        phoneNumber,
         username,
         gender,
         dateOfBirth,
         maritalStatus,
         otp
       } = req.body;
+
+      // Support both 'phone' and 'phoneNumber' field names
+      const phoneToUpdate = phone || phoneNumber;
 
       const userId = req.user.userId;
 
@@ -29,10 +33,10 @@ class ProfileController {
 
       // Handle phone verification if phone and OTP are provided AND phone is not already verified
       let phoneVerifiedInRequest = false;
-      if (phone && otp && !currentUser.is_mobile_verified) {
+      if (phoneToUpdate && otp && !currentUser.is_mobile_verified) {
         const [otpRecords] = await db.execute(
           'SELECT * FROM otp_verifications WHERE mobile_number = ? AND otp = ? AND is_verified = FALSE ORDER BY created_at DESC LIMIT 1',
-          [phone, otp]
+          [phoneToUpdate, otp]
         );
 
         if (otpRecords.length === 0) {
@@ -51,19 +55,26 @@ class ProfileController {
           [otpRecord.id]
         );
         phoneVerifiedInRequest = true;
-      } else if (phone && !otp && currentUser.is_mobile_verified) {
-        phoneVerifiedInRequest = true;
-      } else if (phone && !otp && !currentUser.is_mobile_verified) {
-        // Check if there's a verified OTP record
+      } else if (phoneToUpdate && !otp) {
+        // If phone is provided without OTP, check if there's a verified OTP record
         const [verifiedOtpRecords] = await db.execute(
           'SELECT * FROM otp_verifications WHERE mobile_number = ? AND is_verified = TRUE ORDER BY verified_at DESC LIMIT 1',
-          [phone]
+          [phoneToUpdate]
         );
         
         if (verifiedOtpRecords.length > 0) {
           phoneVerifiedInRequest = true;
+        } else if (!currentUser.is_mobile_verified) {
+          // Allow saving if OTP was verified in the same session (recent verification)
+          const [recentOtpRecords] = await db.execute(
+            'SELECT * FROM otp_verifications WHERE mobile_number = ? AND is_verified = TRUE AND verified_at >= DATE_SUB(NOW(), INTERVAL 5 MINUTE) ORDER BY verified_at DESC LIMIT 1',
+            [phoneToUpdate]
+          );
+          if (recentOtpRecords.length > 0) {
+            phoneVerifiedInRequest = true;
+          }
         } else {
-          return res.status(400).json({ error: 'Phone number must be verified with OTP' });
+          phoneVerifiedInRequest = true; // Already verified
         }
       }
 
@@ -103,12 +114,10 @@ class ProfileController {
         updateFields.push('email = ?');
         updateValues.push(email);
       }
-      if (phone) {
+      if (phoneToUpdate && phoneVerifiedInRequest) {
         updateFields.push('mobile_number = ?');
-        updateValues.push(phone);
-        if (phoneVerifiedInRequest || currentUser.is_mobile_verified) {
+        updateValues.push(phoneToUpdate);
           updateFields.push('is_mobile_verified = TRUE');
-        }
       }
       if (username) {
         updateFields.push('username = ?');
@@ -141,9 +150,13 @@ class ProfileController {
         );
       }
 
-      // Get updated user
+      // Get updated user with profile data
       const [updatedUsers] = await db.execute(
-        'SELECT id, name, full_name, email, mobile_number, username, employee_id, profile_photo, gender, date_of_birth, marital_status, onboarding_completed FROM users WHERE id = ?',
+        `SELECT u.id, u.name, u.full_name, u.email, u.mobile_number, u.username, u.profile_photo, u.gender, u.date_of_birth, u.marital_status, u.onboarding_completed,
+         up.employee_id
+         FROM users u
+         LEFT JOIN user_profiles up ON u.id = up.user_id
+         WHERE u.id = ?`,
         [userId]
       );
 
@@ -162,7 +175,11 @@ class ProfileController {
     try {
       const userId = req.user.userId;
       const [users] = await db.execute(
-        'SELECT id, name, full_name, email, mobile_number, username, employee_id, profile_photo, gender, date_of_birth, marital_status, onboarding_completed, preferences FROM users WHERE id = ?',
+        `SELECT u.id, u.name, u.full_name, u.email, u.mobile_number, u.username, u.profile_photo, u.gender, u.date_of_birth, u.marital_status, u.onboarding_completed, u.preferences,
+         up.employee_id
+         FROM users u
+         LEFT JOIN user_profiles up ON u.id = up.user_id
+         WHERE u.id = ?`,
         [userId]
       );
       

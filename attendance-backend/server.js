@@ -9,13 +9,14 @@ const authRoutes = require('./routes/authRoutes');
 const onboardingRoutes = require('./routes/onboardingRoutes');
 const otpRoutes = require('./routes/otpRoutes');
 const profileRoutes = require('./routes/profileRoutes');
+const dashboardRoutes = require('./routes/dashboardRoutes');
 
 // Import middleware
 const { errorHandler, notFoundHandler } = require('./middleware/errorHandler');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
-const FACE_SERVICE_URL = process.env.FACE_SERVICE_URL || 'http://localhost:5000';
+const FACE_SERVICE_URL = process.env.FACE_SERVICE_URL || 'http://localhost:8000';
 
 // Middleware
 app.use(cors());
@@ -35,6 +36,7 @@ app.use('/api/onboarding', onboardingRoutes);
 app.use('/api/employee', employeeRoutes);
 app.use('/api/employees', employeeRoutes); // Legacy route for backward compatibility
 app.use('/api/attendance', attendanceRoutes);
+app.use('/api/dashboard', dashboardRoutes);
 
 // 404 handler
 app.use(notFoundHandler);

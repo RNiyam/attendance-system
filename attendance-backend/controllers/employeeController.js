@@ -19,7 +19,23 @@ class EmployeeController {
       }
 
       // Get face embedding from Python service
-      const embedding = await faceService.registerFace(image);
+      console.log('\n📸 Employee Registration - Calling face service...');
+      let embedding;
+      try {
+        embedding = await faceService.registerFace(image);
+        console.log('✅ Face embedding received:', embedding ? `Array of ${embedding.length} values` : 'null');
+      } catch (error) {
+        console.error('❌ Face service error:', error.message);
+        console.error('Error stack:', error.stack);
+        return res.status(500).json({ 
+          error: error.message || 'Failed to register face. Please ensure the Python face recognition service is running on port 8000.'
+        });
+      }
+      
+      if (!embedding || !Array.isArray(embedding) || embedding.length === 0) {
+        return res.status(400).json({ error: 'Failed to extract face embedding. Please ensure exactly one face is visible in the image.' });
+      }
+      
       const embeddingJson = JSON.stringify(embedding);
 
       // Check if employee code already exists

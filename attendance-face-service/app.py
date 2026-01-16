@@ -175,5 +175,8 @@ def compare_faces():
         return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
-    print("Starting Face Recognition Service on http://localhost:5000")
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    # Use port 8000 to avoid conflict with macOS AirPlay Receiver (ports 5000-5001)
+    PORT = 8000
+    print(f"Starting Face Recognition Service on http://localhost:{PORT}")
+    print(f"Registered routes: {[str(rule) for rule in app.url_map.iter_rules()]}")
+    app.run(host='0.0.0.0', port=PORT, debug=True, use_reloader=False)

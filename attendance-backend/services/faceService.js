@@ -1,7 +1,7 @@
 const axios = require('axios');
 require('dotenv').config();
 
-const FACE_SERVICE_URL = process.env.FACE_SERVICE_URL || 'http://localhost:5000';
+const FACE_SERVICE_URL = process.env.FACE_SERVICE_URL || 'http://localhost:8000';
 
 class FaceService {
   /**
@@ -11,8 +11,26 @@ class FaceService {
    */
   async registerFace(image) {
     try {
+      console.log(`\n📸 REGISTERING FACE WITH PYTHON SERVICE:`);
+      console.log(`   Service URL: ${FACE_SERVICE_URL}/register-face`);
+      console.log(`   Image size: ${image ? (image.length / 1024).toFixed(2) + ' KB' : 'null'}`);
+      
+      // First, check if service is available
+      const isHealthy = await this.healthCheck();
+      if (!isHealthy) {
+        throw new Error(`Face recognition service is not available at ${FACE_SERVICE_URL}. Please ensure the Python service is running on port 8000.`);
+      }
+      
+      // Extract base64 data if it's a data URL (format: data:image/jpeg;base64,/9j/4AAQ...)
+      let imageData = image;
+      if (image && typeof image === 'string' && image.includes(',')) {
+        // Remove data URL prefix (e.g., "data:image/jpeg;base64,")
+        imageData = image.split(',')[1];
+        console.log(`   Extracted base64 data (first 50 chars): ${imageData.substring(0, 50)}...`);
+      }
+      
       const response = await axios.post(`${FACE_SERVICE_URL}/register-face`, {
-        image
+        image: imageData || image
       }, {
         timeout: 30000,
         headers: {
@@ -22,15 +40,38 @@ class FaceService {
         maxBodyLength: Infinity
       });
 
+      console.log('Python service response status:', response.status);
+      console.log('Python service response data:', JSON.stringify(response.data).substring(0, 200));
+
       if (response.data.error) {
         throw new Error(response.data.error);
       }
 
+      if (!response.data.embedding) {
+        throw new Error('No embedding returned from face recognition service');
+      }
+
       return response.data.embedding;
     } catch (error) {
-      if (error.code === 'ECONNREFUSED' || error.response?.status === 404) {
-        throw new Error('Face recognition service is not available. Please ensure the Python service is running on port 5000.');
+      console.error('Face service error details:', {
+        code: error.code,
+        message: error.message,
+        status: error.response?.status,
+        url: `${FACE_SERVICE_URL}/register-face`
+      });
+      
+      if (error.code === 'ECONNREFUSED') {
+        throw new Error('Face recognition service is not available. Please ensure the Python service is running on port 8000.');
       }
+      
+      if (error.response?.status === 404) {
+        throw new Error(`Face recognition service endpoint not found. Check if service is running correctly. URL: ${FACE_SERVICE_URL}/register-face`);
+      }
+      
+      if (error.message) {
+        throw new Error(`Face recognition error: ${error.message}`);
+      }
+      
       throw error;
     }
   }
@@ -87,7 +128,7 @@ class FaceService {
       console.error('Error stack:', error.stack);
 
       if (error.code === 'ECONNREFUSED' || error.response?.status === 404) {
-        throw new Error('Face recognition service is not available. Please ensure the Python service is running on port 5000.');
+        throw new Error('Face recognition service is not available. Please ensure the Python service is running on port 8000.');
       }
 
       if (error.response?.data) {

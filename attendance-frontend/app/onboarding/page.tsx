@@ -30,6 +30,11 @@ export default function OnboardingPage() {
   const [pageLoading, setPageLoading] = useState(true)
   const [error, setError] = useState('')
   const [otpCountdown, setOtpCountdown] = useState(0)
+  const [videoRef, setVideoRef] = useState<HTMLVideoElement | null>(null)
+  const [stream, setStream] = useState<MediaStream | null>(null)
+  const [videoReady, setVideoReady] = useState(false)
+  const [capturingFace, setCapturingFace] = useState(false)
+  const [faceCaptured, setFaceCaptured] = useState(false)
   
   const [formData, setFormData] = useState<OnboardingData>({
     phoneNumber: '',
@@ -106,7 +111,10 @@ export default function OnboardingPage() {
 
       if (response.data.success) {
         setOtpSent(true)
-        setOtpVerified(false)
+        // Don't reset otpVerified if already verified for this phone number
+        if (!otpVerified) {
+          setOtpVerified(false)
+        }
         setOtpCountdown(60) // 60 second countdown
         // Start countdown timer
         const timer = setInterval(() => {
@@ -157,6 +165,21 @@ export default function OnboardingPage() {
         setOtpVerified(true)
         setOtpCountdown(0)
         setError('')
+        
+        // Save phone number to profile after successful verification
+        try {
+          const token = localStorage.getItem('token')
+          if (token) {
+            await axios.put(
+              `${API_URL}/api/profile`,
+              { phoneNumber: cleanPhone },
+              { headers: { Authorization: `Bearer ${token}` } }
+            )
+          }
+        } catch (err) {
+          console.error('Failed to save phone number:', err)
+          // Don't show error to user, phone is still verified
+        }
       }
     } catch (err: any) {
       setError(err.response?.data?.message || err.response?.data?.error || 'Invalid OTP. Please try again.')
@@ -166,15 +189,97 @@ export default function OnboardingPage() {
     }
   }
 
-  const handleCaptureFace = async () => {
+  const startCamera = async () => {
     try {
-      // Open camera for face capture
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true })
-      // TODO: Implement face capture UI and send to backend
-      // For now, this is a placeholder
-      setError('Face capture functionality will be implemented')
+      setError('')
+      const mediaStream = await navigator.mediaDevices.getUserMedia({ 
+        video: { facingMode: 'user' } 
+      })
+      setStream(mediaStream)
+      // Set videoReady immediately so video element renders
+      setVideoReady(true)
     } catch (err) {
       setError('Camera access denied. Please allow camera permissions.')
+      setVideoReady(false)
+    }
+  }
+
+  const stopCamera = () => {
+    if (stream) {
+      stream.getTracks().forEach(track => track.stop())
+      setStream(null)
+    }
+    if (videoRef) {
+      videoRef.srcObject = null
+    }
+    setVideoReady(false)
+  }
+
+  const captureImage = (): string | null => {
+    if (!videoRef) return null
+    
+    const canvas = document.createElement('canvas')
+    canvas.width = videoRef.videoWidth
+    canvas.height = videoRef.videoHeight
+    const ctx = canvas.getContext('2d')
+    
+    if (!ctx) return null
+    
+    ctx.drawImage(videoRef, 0, 0)
+    return canvas.toDataURL('image/jpeg', 0.8)
+  }
+
+  const handleCaptureFace = async () => {
+    if (!videoReady || !employeeId) {
+      setError('Please start camera and ensure employee ID is available')
+      return
+    }
+
+    setCapturingFace(true)
+    setError('')
+
+    try {
+      await new Promise(resolve => setTimeout(resolve, 500)) // Small delay for better capture
+      const image = captureImage()
+      
+      if (!image) {
+        throw new Error('Failed to capture image')
+      }
+
+      const token = localStorage.getItem('token')
+      if (!token) {
+        router.push('/login')
+        return
+      }
+
+      // Get user name from localStorage
+      const userData = localStorage.getItem('user')
+      const userName = userData ? JSON.parse(userData).name : formData.username
+
+      // Register face with backend
+      const response = await axios.post(
+        `${API_URL}/api/employee/register`,
+        {
+          empCode: employeeId,
+          name: userName || formData.username,
+          image
+        },
+        {
+          headers: { Authorization: `Bearer ${token}` }
+        }
+      )
+
+      if (response.data.success) {
+        setFaceCaptured(true)
+        setFormData(prev => ({ ...prev, profilePhoto: image }))
+        setError('')
+        stopCamera()
+      }
+    } catch (err: any) {
+      setError(err.response?.data?.error || 'Failed to capture face. Please try again.')
+      setFaceCaptured(false)
+    } finally {
+      setCapturingFace(false)
     }
   }
 
@@ -187,6 +292,10 @@ export default function OnboardingPage() {
       }
       if (!otpVerified) {
         setError('Please verify your phone number with OTP first')
+        return
+      }
+      if (!faceCaptured) {
+        setError('Please capture your face photo first')
         return
       }
       // Generate/get employee ID after step 1 completion
@@ -261,7 +370,7 @@ export default function OnboardingPage() {
           localStorage.setItem('employeeId', response.data.employeeId)
         }
         // Redirect to main app
-        router.push('/')
+        router.push('/dashboard')
       }
     } catch (err: any) {
       console.error('Onboarding error:', err)
@@ -278,6 +387,18 @@ export default function OnboardingPage() {
       if (!token) {
         router.push('/login')
         return
+      }
+
+      // Get user data from localStorage to autofill username
+      const userData = localStorage.getItem('user')
+      let userName = ''
+      if (userData) {
+        try {
+          const user = JSON.parse(userData)
+          userName = user.name || ''
+        } catch (e) {
+          console.error('Error parsing user data:', e)
+        }
       }
 
       // Fetch employee ID immediately
@@ -300,7 +421,7 @@ export default function OnboardingPage() {
 
         if (response.data.completed) {
           // Already completed, redirect to main app
-          router.push('/')
+          router.push('/dashboard')
           return
         }
 
@@ -319,7 +440,7 @@ export default function OnboardingPage() {
             setFormData({
               phoneNumber: profile.phone_number || '',
               otp: '',
-              username: profile.username || '',
+              username: profile.username || userName || '',
               profilePhoto: profile.profile_photo || null,
               gender: profile.gender || '',
               dateOfBirth: profile.date_of_birth || '',
@@ -331,9 +452,23 @@ export default function OnboardingPage() {
               setEmployeeId(profile.employee_id)
               localStorage.setItem('employeeId', profile.employee_id)
             }
+          } else {
+            // No profile exists yet, autofill username from signup
+            if (userName) {
+              setFormData(prev => ({
+                ...prev,
+                username: userName
+              }))
+            }
           }
         } catch (profileError) {
-          // Profile doesn't exist yet, that's okay
+          // Profile doesn't exist yet, autofill username from signup
+          if (userName) {
+            setFormData(prev => ({
+              ...prev,
+              username: userName
+            }))
+          }
         }
       } catch (error) {
         console.error('Error checking onboarding status:', error)
@@ -348,7 +483,7 @@ export default function OnboardingPage() {
   const isStepComplete = (stepId: number) => {
     switch (stepId) {
       case 1:
-        return formData.phoneNumber && formData.username
+        return formData.phoneNumber && formData.username && otpVerified && faceCaptured
       case 2:
         return formData.gender && formData.dateOfBirth && formData.maritalStatus
       case 3:
@@ -357,6 +492,20 @@ export default function OnboardingPage() {
         return false
     }
   }
+
+  // Update video element when stream changes
+  useEffect(() => {
+    if (videoRef && stream) {
+      videoRef.srcObject = stream
+    }
+  }, [stream, videoRef])
+
+  // Cleanup camera on unmount
+  useEffect(() => {
+    return () => {
+      stopCamera()
+    }
+  }, [])
 
   if (pageLoading) {
     return (
@@ -454,29 +603,29 @@ export default function OnboardingPage() {
         </div>
 
         {/* Right Content Area */}
-        <div className="flex-1 bg-white overflow-y-auto">
+        <div className="flex-1 bg-gray-50 overflow-y-auto">
           <div className="max-w-3xl mx-auto p-8">
-            {/* Header */}
-            <div className="flex justify-between items-start mb-8">
-              <div>
-                <h1 className="text-3xl font-bold text-gray-900 mb-2">
-                  {steps[currentStep - 1].title}
-                </h1>
-                <p className="text-gray-600">
-                  {steps[currentStep - 1].description}
-                </p>
+            {/* White Card Container */}
+            <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-8">
+              {/* Header */}
+              <div className="flex justify-between items-start mb-8">
+                <div>
+                  <h1 className="text-3xl font-bold text-gray-900 mb-2">
+                    {steps[currentStep - 1].title}
+                  </h1>
+                  <p className="text-gray-600">
+                    {steps[currentStep - 1].description}
+                  </p>
+                </div>
+               
               </div>
-              <a href="#" className="text-gray-600 hover:text-gray-900 text-sm font-medium">
-                Having troubles? <span className="underline" style={{ color: '#221461' }}>Get Help</span>
-              </a>
-            </div>
 
-            {/* Error Message */}
-            {error && (
-              <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm mb-6">
-                {error}
-              </div>
-            )}
+              {/* Error Message */}
+              {error && (
+                <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm mb-6">
+                  {error}
+                </div>
+              )}
 
             {/* Step 1: Personal Information */}
             {currentStep === 1 && (
@@ -607,38 +756,104 @@ export default function OnboardingPage() {
                 {/* Profile Photo */}
                 <div>
                   <label className="flex items-center gap-2 text-sm font-semibold text-gray-900 mb-2">
-                    Profile Photo
+                    Profile Photo *
                     <HelpCircle size={14} style={{ color: '#221461' }} />
                   </label>
                   <div className="space-y-3">
-                    <button
-                      onClick={handleCaptureFace}
-                      type="button"
-                      className="w-full px-6 py-4 text-white rounded-lg transition font-medium flex items-center justify-center gap-2"
-                      style={{ backgroundColor: '#221461' }}
-                      onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#1a1049'}
-                      onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#221461'}
-                    >
-                      <Camera size={20} />
-                      Capture Face
-                    </button>
-                    <div className="flex gap-3">
-                      <button 
+                    {!videoReady && !faceCaptured && (
+                      <button
+                        onClick={startCamera}
                         type="button"
-                        className="px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition font-medium text-sm"
+                        className="w-full px-6 py-4 text-white rounded-lg transition font-medium flex items-center justify-center gap-2"
+                        style={{ backgroundColor: '#221461' }}
+                        onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#1a1049'}
+                        onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#221461'}
                       >
-                        Choose file
+                        <Camera size={20} />
+                        Start Camera
                       </button>
-                      <span className="px-4 py-2 bg-gray-100 text-gray-500 rounded-lg font-medium text-sm flex items-center">
-                        {formData.profilePhoto ? 'File selected' : 'No file chosen'}
-                      </span>
-                    </div>
+                    )}
+                    
+                    {(videoReady || stream) && !faceCaptured && (
+                      <div className="space-y-3">
+                        <div className="relative w-full bg-gray-900 rounded-lg overflow-hidden" style={{ aspectRatio: '4/3', minHeight: '300px' }}>
+                          <video
+                            ref={(el) => {
+                              if (el) {
+                                setVideoRef(el)
+                              }
+                            }}
+                            autoPlay
+                            playsInline
+                            muted
+                            className="w-full h-full object-cover"
+                            style={{ display: stream ? 'block' : 'none' }}
+                          />
+                          {!stream && (
+                            <div className="absolute inset-0 flex items-center justify-center text-white">
+                              <div className="text-center">
+                                <Loader2 size={32} className="animate-spin mx-auto mb-2" />
+                                <p>Starting camera...</p>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                        <div className="flex gap-3">
+                          <button
+                            onClick={handleCaptureFace}
+                            disabled={capturingFace || !employeeId}
+                            type="button"
+                            className="flex-1 px-6 py-3 text-white rounded-lg transition font-medium flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                            style={{ backgroundColor: '#221461' }}
+                            onMouseEnter={(e) => {
+                              if (!e.currentTarget.disabled) {
+                                e.currentTarget.style.backgroundColor = '#1a1049'
+                              }
+                            }}
+                            onMouseLeave={(e) => {
+                              if (!e.currentTarget.disabled) {
+                                e.currentTarget.style.backgroundColor = '#221461'
+                              }
+                            }}
+                          >
+                            {capturingFace ? (
+                              <>
+                                <Loader2 size={16} className="animate-spin" />
+                                Capturing...
+                              </>
+                            ) : (
+                              <>
+                                <Camera size={20} />
+                                Capture Face
+                              </>
+                            )}
+                          </button>
+                          <button
+                            onClick={stopCamera}
+                            type="button"
+                            className="px-4 py-3 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition font-medium text-sm"
+                          >
+                            Stop Camera
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {faceCaptured && (
+                      <div className="bg-green-50 border border-green-200 rounded-lg p-4 flex items-center gap-3">
+                        <CheckCircle size={20} className="text-green-600 flex-shrink-0" />
+                        <div>
+                          <p className="text-sm font-medium text-green-900">Face captured successfully!</p>
+                          <p className="text-xs text-green-700">Your face has been registered for attendance verification.</p>
+                        </div>
+                      </div>
+                    )}
                   </div>
                   {/* Informational Box */}
                   <div className="mt-4 border rounded-lg p-3 flex items-start gap-3" style={{ backgroundColor: 'rgba(34, 20, 97, 0.1)', borderColor: 'rgba(34, 20, 97, 0.2)' }}>
                     <FileText size={16} className="mt-0.5 flex-shrink-0" style={{ color: '#221461' }} />
                     <p className="text-xs" style={{ color: '#221461' }}>
-                      Your profile photo will be used for face recognition during attendance check-in. Please ensure good lighting and a clear face view.
+                      Your face photo will be used for face recognition during attendance check-in. Please ensure good lighting and a clear face view. This photo will be stored and used to verify your identity when checking in/out.
                     </p>
                   </div>
                 </div>
@@ -647,66 +862,80 @@ export default function OnboardingPage() {
 
             {currentStep === 2 && (
               <div className="space-y-6">
-                {/* Gender */}
-                <div>
-                  <label className="flex items-center gap-2 text-sm font-semibold text-gray-900 mb-2">
-                    Gender *
-                    <HelpCircle size={14} style={{ color: '#221461' }} />
-                  </label>
-                  <select
-                    value={formData.gender}
-                    onChange={(e) => handleInputChange('gender', e.target.value)}
-                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition text-gray-900 bg-white appearance-none bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTIiIGhlaWdodD0iOCIgdmlld0JveD0iMCAwIDEyIDgiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHBhdGggZD0iTTEgMUw2IDZMMTEgMSIgc3Ryb2tlPSIjNkI3Mjc5IiBzdHJva2Utd2lkdGg9IjEuNSIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIi8+PC9zdmc+')] bg-no-repeat bg-right-3 bg-center pr-10"
-                  >
-                    <option value="">Select Gender</option>
-                    <option value="male">Male</option>
-                    <option value="female">Female</option>
-                    <option value="other">Other</option>
-                  </select>
-                </div>
-
-                {/* Date of Birth */}
-                <div>
-                  <label className="flex items-center gap-2 text-sm font-semibold text-gray-900 mb-2">
-                    Date of Birth *
-                    <HelpCircle size={14} style={{ color: '#221461' }} />
-                  </label>
-                  <div className="relative">
-                    <input
-                      type="date"
-                      value={formData.dateOfBirth}
-                      onChange={(e) => handleInputChange('dateOfBirth', e.target.value)}
-                      className="w-full px-4 py-3 border border-gray-300 rounded-lg outline-none transition text-gray-900 bg-white"
-                    style={{ '--tw-ring-color': '#221461' } as React.CSSProperties}
-                    onFocus={(e) => {
-                      e.currentTarget.style.borderColor = '#221461'
-                      e.currentTarget.style.boxShadow = '0 0 0 2px rgba(34, 20, 97, 0.2)'
-                    }}
-                    onBlur={(e) => {
-                      e.currentTarget.style.borderColor = ''
-                      e.currentTarget.style.boxShadow = ''
-                    }}
-                    />
+                <div className="grid grid-cols-3 gap-4">
+                  {/* Gender */}
+                  <div>
+                    <label className="flex items-center gap-2 text-sm font-semibold text-gray-900 mb-2">
+                      Gender *
+                      <HelpCircle size={14} style={{ color: '#221461' }} />
+                    </label>
+                    <select
+                      value={formData.gender}
+                      onChange={(e) => handleInputChange('gender', e.target.value)}
+                      className="w-full px-3 py-2 pr-8 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition text-gray-900 bg-white appearance-none"
+                      style={{
+                        backgroundImage: `url("data:image/svg+xml,%3Csvg width='12' height='8' viewBox='0 0 12 8' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1L6 6L11 1' stroke='%236B7279' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")`,
+                        backgroundRepeat: 'no-repeat',
+                        backgroundPosition: 'right 0.75rem center',
+                        backgroundSize: '12px 8px'
+                      }}
+                    >
+                      <option value="">Select Gender</option>
+                      <option value="male">Male</option>
+                      <option value="female">Female</option>
+                      <option value="other">Other</option>
+                    </select>
                   </div>
-                </div>
 
-                {/* Marital Status */}
-                <div>
-                  <label className="flex items-center gap-2 text-sm font-semibold text-gray-900 mb-2">
-                    Marital Status *
-                    <HelpCircle size={14} style={{ color: '#221461' }} />
-                  </label>
-                  <select
-                    value={formData.maritalStatus}
-                    onChange={(e) => handleInputChange('maritalStatus', e.target.value)}
-                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition text-gray-900 bg-white appearance-none bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTIiIGhlaWdodD0iOCIgdmlld0JveD0iMCAwIDEyIDgiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHBhdGggZD0iTTEgMUw2IDZMMTEgMSIgc3Ryb2tlPSIjNkI3Mjc5IiBzdHJva2Utd2lkdGg9IjEuNSIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIi8+PC9zdmc+')] bg-no-repeat bg-right-3 bg-center pr-10"
-                  >
-                    <option value="">Select Status</option>
-                    <option value="single">Single</option>
-                    <option value="married">Married</option>
-                    <option value="divorced">Divorced</option>
-                    <option value="widowed">Widowed</option>
-                  </select>
+                  {/* Date of Birth */}
+                  <div>
+                    <label className="flex items-center gap-2 text-sm font-semibold text-gray-900 mb-2">
+                      Date of Birth *
+                      <HelpCircle size={14} style={{ color: '#221461' }} />
+                    </label>
+                    <div className="relative">
+                      <input
+                        type="date"
+                        value={formData.dateOfBirth}
+                        onChange={(e) => handleInputChange('dateOfBirth', e.target.value)}
+                        className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg outline-none transition text-gray-900 bg-white"
+                      style={{ '--tw-ring-color': '#221461' } as React.CSSProperties}
+                      onFocus={(e) => {
+                        e.currentTarget.style.borderColor = '#221461'
+                        e.currentTarget.style.boxShadow = '0 0 0 2px rgba(34, 20, 97, 0.2)'
+                      }}
+                      onBlur={(e) => {
+                        e.currentTarget.style.borderColor = ''
+                        e.currentTarget.style.boxShadow = ''
+                      }}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Marital Status */}
+                  <div>
+                    <label className="flex items-center gap-2 text-sm font-semibold text-gray-900 mb-2">
+                      Marital Status *
+                      <HelpCircle size={14} style={{ color: '#221461' }} />
+                    </label>
+                    <select
+                      value={formData.maritalStatus}
+                      onChange={(e) => handleInputChange('maritalStatus', e.target.value)}
+                      className="w-full px-3 py-2 pr-8 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition text-gray-900 bg-white appearance-none"
+                      style={{
+                        backgroundImage: `url("data:image/svg+xml,%3Csvg width='12' height='8' viewBox='0 0 12 8' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1L6 6L11 1' stroke='%236B7279' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")`,
+                        backgroundRepeat: 'no-repeat',
+                        backgroundPosition: 'right 0.75rem center',
+                        backgroundSize: '12px 8px'
+                      }}
+                    >
+                      <option value="">Select Status</option>
+                      <option value="single">Single</option>
+                      <option value="married">Married</option>
+                      <option value="divorced">Divorced</option>
+                      <option value="widowed">Widowed</option>
+                    </select>
+                  </div>
                 </div>
                 
                 {/* Informational Box */}
@@ -766,44 +995,56 @@ export default function OnboardingPage() {
               </div>
             )}
 
-            {/* Navigation Buttons */}
-            <div className="flex justify-between mt-12 pt-6 border-t border-gray-200">
-              <button
-                onClick={handlePrevious}
-                disabled={currentStep === 1}
-                className={`text-sm font-medium transition ${
-                  currentStep === 1
-                    ? 'text-gray-400 cursor-not-allowed'
-                    : 'text-gray-600 hover:text-gray-900'
-                }`}
-              >
-                PREVIOUS STEP
-              </button>
-
-              {currentStep < 3 ? (
+              {/* Navigation Buttons */}
+              <div className="flex justify-between mt-12 pt-6 border-t border-gray-200">
                 <button
-                  onClick={handleNext}
-                  className="px-8 py-3 text-white rounded-lg transition font-medium flex items-center gap-2 text-sm"
-                  style={{ backgroundColor: '#221461' }}
-                  onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#1a1049'}
-                  onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#221461'}
-                >
-                  NEXT
-                  <ArrowRight size={16} />
-                </button>
-              ) : (
-                <button
-                  onClick={handleCompleteOnboarding}
-                  disabled={isLoading || !formData.policyAgreed}
-                  className={`px-8 py-3 rounded-lg font-medium transition text-sm ${
-                    isLoading || !formData.policyAgreed
-                      ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
-                          : 'text-white'
+                  onClick={handlePrevious}
+                  disabled={currentStep === 1}
+                  className={`text-sm font-medium transition ${
+                    currentStep === 1
+                      ? 'text-gray-400 cursor-not-allowed'
+                      : 'text-gray-600 hover:text-gray-900'
                   }`}
                 >
-                  {isLoading ? 'Completing...' : 'Complete Onboarding'}
+                  PREVIOUS STEP
                 </button>
-              )}
+
+                {currentStep < 3 ? (
+                  <button
+                    onClick={handleNext}
+                    className="px-8 py-3 text-white rounded-lg transition font-medium flex items-center gap-2 text-sm"
+                    style={{ backgroundColor: '#221461' }}
+                    onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#1a1049'}
+                    onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#221461'}
+                  >
+                    NEXT
+                    <ArrowRight size={16} />
+                  </button>
+                ) : (
+                  <button
+                    onClick={handleCompleteOnboarding}
+                    disabled={isLoading || !formData.policyAgreed}
+                    className={`px-8 py-3 rounded-lg font-medium transition text-sm ${
+                      isLoading || !formData.policyAgreed
+                        ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                            : 'text-white'
+                    }`}
+                    style={!isLoading && formData.policyAgreed ? { backgroundColor: '#221461' } : {}}
+                    onMouseEnter={(e) => {
+                      if (!e.currentTarget.disabled) {
+                        e.currentTarget.style.backgroundColor = '#1a1049'
+                      }
+                    }}
+                    onMouseLeave={(e) => {
+                      if (!e.currentTarget.disabled) {
+                        e.currentTarget.style.backgroundColor = '#221461'
+                      }
+                    }}
+                  >
+                    {isLoading ? 'Completing...' : 'Complete Onboarding'}
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         </div>

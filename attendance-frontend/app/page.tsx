@@ -28,12 +28,25 @@ export default function Home() {
   const streamRef = useRef<MediaStream | null>(null)
 
   useEffect(() => {
+    const token = localStorage.getItem('token')
+    const user = JSON.parse(localStorage.getItem('user') || '{}')
+    
+    if (token && user.onboarding_completed) {
+      // Redirect to appropriate dashboard
+      if (user.role === 'admin') {
+        router.push('/admin-dashboard')
+      } else {
+        router.push('/dashboard')
+      }
+      return
+    }
+    
     loadAttendanceRecords()
     loadStats()
     return () => {
       stopCamera()
     }
-  }, [])
+  }, [router])
 
   const startCamera = async () => {
     try {
